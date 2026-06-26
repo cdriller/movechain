@@ -20,9 +20,8 @@ if (!repo) {
 }
 
 const encoded = encodeURIComponent(name);
-execSync(
-  `gh api -X PUT "repos/${repo}/environments/${encoded}" -f wait_timer=0`,
-  { stdio: "inherit" },
-);
+execSync(`gh api -X PUT "repos/${repo}/environments/${encoded}"`, {
+  stdio: "inherit",
+});
 
 console.log(`Environment ready: ${name}`);

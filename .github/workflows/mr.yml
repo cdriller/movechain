@@ -1,7 +1,7 @@
 name: MR
 
-# Push to a branch with an open pull request targeting main.
-# Branch environments store MoveChain only. TripCredits is shared from production.
+# Pull request against main: test gate, branch environment, MoveChain preview
+# deploy, and Vercel preview. TripCredits is shared from production.
 
 on:
   pull_request:
@@ -16,6 +16,19 @@ permissions:
   pull-requests: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Use HTTPS for GitHub git dependencies
+        run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+      - run: npm ci
+      - run: npm test
+
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -30,7 +43,7 @@ jobs:
         run: node scripts/ci-ensure-environment.mjs "${{ steps.meta.outputs.env_name }}"
 
   pipeline:
-    needs: setup
+    needs: [setup, test]
     runs-on: ubuntu-latest
     environment: ${{ needs.setup.outputs.env_name }}
     steps:
@@ -42,7 +55,6 @@ jobs:
       - name: Use HTTPS for GitHub git dependencies
         run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
       - run: npm ci
-      - run: npm test
       - run: npx hardhat compile
 
       - name: Load branch MoveChain variables

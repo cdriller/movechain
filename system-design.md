@@ -82,6 +82,8 @@ Zero Knowledge Proof für Balance Caching
 Was würde das System an Gas kosten?
 Vergleich wie es schon von Opal z.B. umgesetzt wurde.
 
+In Web2 ist die Pipeline auf schnelles, reversibles Deployment optimiert. Bei Smart Contracts verschiebt sich fast alles nach links – die Pipeline ist auf maximale Absicherung vor einem teuren, irreversiblen Schritt optimiert. CI (Tests, Fuzzing, Static Analysis) ist üppig und streng; CD ist bewusst gebremst, je näher an Mainnet, desto mehr menschliche Gates.
+
 # Cherry on the top Ideen 
 
 ## Start/Stop Trip with NFC

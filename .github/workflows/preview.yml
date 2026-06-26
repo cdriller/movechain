@@ -1,0 +1,140 @@
+name: Preview
+
+# PR preview: deploy changed contracts to Sepolia (when needed), build the
+# frontend against the preview MoveChain address, and ship a Vercel preview URL.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Use HTTPS for GitHub git dependencies
+        run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+      - run: npm ci
+      - run: npx hardhat compile
+      - id: detect
+        env:
+          PREV_MOVECHAIN_HASH: ${{ vars.MOVECHAIN_BYTECODE_HASH }}
+          PREV_TRIPCREDITS_HASH: ${{ vars.TRIPCREDITS_BYTECODE_HASH }}
+          MOVECHAIN_ADDRESS: ${{ vars.MOVECHAIN_ADDRESS }}
+          TRIPCREDITS_ADDRESS: ${{ vars.TRIPCREDITS_ADDRESS }}
+        run: |
+          mc_hash="$(node scripts/ci-hash.mjs MoveChain)"
+          tc_hash="$(node scripts/ci-hash.mjs TripCredits)"
+          echo "MoveChain    hash: $mc_hash (prod: ${PREV_MOVECHAIN_HASH:-none})"
+          echo "TripCredits  hash: $tc_hash (prod: ${PREV_TRIPCREDITS_HASH:-none})"
+
+          mc_changed=false
+          tc_changed=false
+          if [ -z "$MOVECHAIN_ADDRESS" ] || [ "$mc_hash" != "$PREV_MOVECHAIN_HASH" ]; then
+            mc_changed=true
+          fi
+          if [ -z "$TRIPCREDITS_ADDRESS" ] || [ "$tc_hash" != "$PREV_TRIPCREDITS_HASH" ]; then
+            tc_changed=true
+          fi
+
+          needs_deploy=false
+          deploy_mode=""
+          if [ -z "$MOVECHAIN_ADDRESS" ] || [ "$tc_changed" = true ]; then
+            needs_deploy=true
+            deploy_mode=full
+          elif [ "$mc_changed" = true ]; then
+            needs_deploy=true
+            deploy_mode=movechain
+          fi
+
+          echo "movechain_changed=$mc_changed" >> "$GITHUB_OUTPUT"
+          echo "tripcredits_changed=$tc_changed" >> "$GITHUB_OUTPUT"
+          echo "needs_deploy=$needs_deploy" >> "$GITHUB_OUTPUT"
+          echo "deploy_mode=$deploy_mode" >> "$GITHUB_OUTPUT"
+          echo "Decision: needs_deploy=$needs_deploy deploy_mode=$deploy_mode"
+
+      - name: Deploy preview contracts to Sepolia
+        id: deploy
+        if: steps.detect.outputs.needs_deploy == 'true'
+        env:
+          SEPOLIA_PRIVATE_KEY: ${{ secrets.SEPOLIA_PRIVATE_KEY }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+          TRIPCREDITS_ADDRESS: ${{ vars.TRIPCREDITS_ADDRESS }}
+          DEPLOYMENT_ID: pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+        run: node scripts/ci-deploy.mjs --mode ${{ steps.detect.outputs.deploy_mode }}
+
+      - name: Resolve MoveChain address
+        id: addr
+        run: |
+          ADDR="${{ steps.deploy.outputs.movechain_address || vars.MOVECHAIN_ADDRESS }}"
+          if [ -z "$ADDR" ]; then
+            echo "No MoveChain address available for the preview build."
+            exit 1
+          fi
+          echo "address=$ADDR" >> "$GITHUB_OUTPUT"
+          if [ "${{ steps.detect.outputs.needs_deploy }}" = "true" ]; then
+            echo "source=preview-deploy (${{ steps.detect.outputs.deploy_mode }})" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=production" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Preview MoveChain: $ADDR"
+
+      - run: npm run gen:abi
+      - run: npm --prefix frontend ci
+      - name: Build frontend for preview
+        env:
+          VITE_MOVECHAIN_ADDRESS: ${{ steps.addr.outputs.address }}
+        run: npm --prefix frontend run build:sepolia
+
+      - name: Deploy Vercel preview
+        id: vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          npm i -g vercel@latest
+          rm -rf .vercel/output
+          mkdir -p .vercel/output/static
+          cp -a frontend/dist/. .vercel/output/static/
+          printf '{"version":3}' > .vercel/output/config.json
+          URL="$(vercel deploy --prebuilt --yes --token="$VERCEL_TOKEN")"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: $URL"
+
+      - name: Prepare PR comment note
+        id: note
+        run: |
+          if [ "${{ steps.detect.outputs.needs_deploy }}" = "true" ]; then
+            echo "text=Deployed \`${{ steps.detect.outputs.deploy_mode }}\` to Sepolia for this preview (production contracts unchanged)." >> "$GITHUB_OUTPUT"
+          else
+            echo "text=No contract changes — preview uses the production MoveChain address." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment preview on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: movechain-preview
+          message: |
+            ## MoveChain preview
+
+            | | |
+            |---|---|
+            | **Vercel** | ${{ steps.vercel.outputs.url }} |
+            | **MoveChain** | [`${{ steps.addr.outputs.address }}`](https://sepolia.etherscan.io/address/${{ steps.addr.outputs.address }}) |
+            | **Contract source** | ${{ steps.addr.outputs.source }} |
+
+            ${{ steps.note.outputs.text }}

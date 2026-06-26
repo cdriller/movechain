@@ -9,8 +9,8 @@
 //
 // After deploying it re-seeds the operator whitelist (scripts/seed-operators.mjs)
 // and emits GitHub Actions outputs (and prints them) so the workflow can persist
-// the new address/hashes as repository variables and hand the address to the
-// frontend build:
+// the new address/hashes as GitHub Environment variables and hand the address
+// to the frontend build:
 //   movechain_address, tripcredits_address, movechain_hash, tripcredits_hash
 //
 // Required env: SEPOLIA_PRIVATE_KEY, SEPOLIA_RPC_URL, ETHERSCAN_API_KEY.
@@ -27,12 +27,17 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const modeFlag = process.argv.indexOf("--mode");
 const mode = modeFlag !== -1 ? process.argv[modeFlag + 1] : undefined;
+const skipVerify = process.argv.includes("--skip-verify");
 if (mode !== "movechain" && mode !== "full") {
-  console.error("Usage: node scripts/ci-deploy.mjs --mode <movechain|full>");
+  console.error("Usage: node scripts/ci-deploy.mjs --mode <movechain|full> [--skip-verify]");
   process.exit(1);
 }
 
-for (const v of ["SEPOLIA_PRIVATE_KEY", "SEPOLIA_RPC_URL", "ETHERSCAN_API_KEY"]) {
+for (const v of [
+  "SEPOLIA_PRIVATE_KEY",
+  "SEPOLIA_RPC_URL",
+  ...(skipVerify ? [] : ["ETHERSCAN_API_KEY"]),
+]) {
   if (!process.env[v]) {
     console.error(`Missing required env var: ${v}`);
     process.exit(1);
@@ -62,7 +67,8 @@ function readAddresses(deploymentId) {
 }
 
 const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
-const deploymentId = `ci-${mode}-${runId}`;
+const deploymentId = process.env.DEPLOYMENT_ID ?? `ci-${mode}-${runId}`;
+const verifyFlag = skipVerify ? "" : " --verify";
 
 // Compile first so we can compute artifact hashes regardless of mode.
 run("npx hardhat compile");
@@ -77,7 +83,7 @@ if (mode === "full") {
   run(
     `npx hardhat ignition deploy ignition/modules/MoveChain.ts ` +
       `--network sepolia --parameters ${params} ` +
-      `--deployment-id ${deploymentId} --verify`,
+      `--deployment-id ${deploymentId}${verifyFlag}`,
   );
   const addresses = readAddresses(deploymentId);
   moveChainAddress = addresses["MoveChainModule#MoveChain"];
@@ -110,7 +116,7 @@ if (mode === "full") {
   run(
     `npx hardhat ignition deploy ignition/modules/MoveChainOnly.ts ` +
       `--network sepolia --parameters ${paramsPath} ` +
-      `--deployment-id ${deploymentId} --verify`,
+      `--deployment-id ${deploymentId}${verifyFlag}`,
   );
   const addresses = readAddresses(deploymentId);
   moveChainAddress = addresses["MoveChainOnlyModule#MoveChain"];

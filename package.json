@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "test": "hardhat test",
     "compile": "hardhat compile && node scripts/gen-abi.mjs",
     "gen:abi": "node scripts/gen-abi.mjs",

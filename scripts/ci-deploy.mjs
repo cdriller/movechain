@@ -1,21 +1,17 @@
 // Non-interactive Sepolia deploy for CI.
 //
-// Two modes:
-//   --mode movechain   Redeploys ONLY MoveChain against the existing TripCredits
-//                       (the common case; TripCredits + credit balances preserved).
-//   --mode full        Deploys fresh TripCredits + MoveChain (destructive: wipes
-//                       all rider credit balances). Gated behind a manual approval
-//                       in the workflow.
+// Modes:
+//   --mode preview    Branch preview: deploy MoveChain only, do NOT call
+//                     TripCredits.setPlatform (production stays wired).
+//   --mode movechain  Production: redeploy MoveChain + setPlatform on TripCredits.
+//   --mode full       Fresh TripCredits + MoveChain (destructive).
 //
 // After deploying it re-seeds the operator whitelist (scripts/seed-operators.mjs)
-// and emits GitHub Actions outputs (and prints them) so the workflow can persist
-// the new address/hashes as GitHub Environment variables and hand the address
-// to the frontend build:
+// and emits GitHub Actions outputs:
 //   movechain_address, tripcredits_address, movechain_hash, tripcredits_hash
 //
 // Required env: SEPOLIA_PRIVATE_KEY, SEPOLIA_RPC_URL, ETHERSCAN_API_KEY.
-// Optional env: TRIPCREDITS_ADDRESS (movechain mode; falls back to the committed
-//               ignition/params/sepolia-movechain.json value).
+// Optional env: TRIPCREDITS_ADDRESS (preview/movechain; falls back to params file).
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -28,8 +24,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const modeFlag = process.argv.indexOf("--mode");
 const mode = modeFlag !== -1 ? process.argv[modeFlag + 1] : undefined;
 const skipVerify = process.argv.includes("--skip-verify");
-if (mode !== "movechain" && mode !== "full") {
-  console.error("Usage: node scripts/ci-deploy.mjs --mode <movechain|full> [--skip-verify]");
+if (mode !== "preview" && mode !== "movechain" && mode !== "full") {
+  console.error(
+    "Usage: node scripts/ci-deploy.mjs --mode <preview|movechain|full> [--skip-verify]",
+  );
   process.exit(1);
 }
 
@@ -46,7 +44,6 @@ for (const v of [
 
 function run(cmd, opts = {}) {
   console.log(`\n$ ${cmd}`);
-  // Pipe "y\n" so Ignition's "confirm deploy to <network>" prompt is auto-answered.
   execSync(cmd, { cwd: root, stdio: ["pipe", "inherit", "inherit"], input: "y\n", ...opts });
 }
 
@@ -66,11 +63,45 @@ function readAddresses(deploymentId) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function loadMoveChainOnlyParams() {
+  const committed = JSON.parse(
+    readFileSync(join(root, "ignition/params/sepolia-movechain.json"), "utf8"),
+  );
+  const base = committed.MoveChainOnlyModule ?? {};
+  const tripCreditsAddress = process.env.TRIPCREDITS_ADDRESS ?? base.tripCredits;
+  if (!tripCreditsAddress) {
+    console.error("No TripCredits address (set TRIPCREDITS_ADDRESS or the params file).");
+    process.exit(1);
+  }
+  return { base, tripCreditsAddress };
+}
+
+function deployMoveChainModule(modulePath, moduleKey, paramsModuleKey, tripCreditsAddress, base) {
+  const paramsObj = {
+    [paramsModuleKey]: {
+      admin1: base.admin1,
+      admin2: base.admin2,
+      admin3: base.admin3,
+      tripCredits: tripCreditsAddress,
+    },
+  };
+  const tmp = mkdtempSync(join(tmpdir(), "movechain-params-"));
+  const paramsPath = join(tmp, "params.json");
+  writeFileSync(paramsPath, JSON.stringify(paramsObj, null, 2));
+
+  run(
+    `npx hardhat ignition deploy ${modulePath} ` +
+      `--network sepolia --parameters ${paramsPath} ` +
+      `--deployment-id ${deploymentId}${verifyFlag}`,
+  );
+  const addresses = readAddresses(deploymentId);
+  return addresses[`${moduleKey}#MoveChain`];
+}
+
 const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
 const deploymentId = process.env.DEPLOYMENT_ID ?? `ci-${mode}-${runId}`;
 const verifyFlag = skipVerify ? "" : " --verify";
 
-// Compile first so we can compute artifact hashes regardless of mode.
 run("npx hardhat compile");
 const movechainHash = bytecodeHash("MoveChain");
 const tripcreditsHash = bytecodeHash("TripCredits");
@@ -89,37 +120,26 @@ if (mode === "full") {
   moveChainAddress = addresses["MoveChainModule#MoveChain"];
   tripCreditsAddress = addresses["MoveChainModule#TripCredits"];
 } else {
-  // movechain: reuse admins from the committed params, but take TripCredits from
-  // env (the current address persisted in CI) so we never depend on a stale file.
-  const committed = JSON.parse(
-    readFileSync(join(root, "ignition/params/sepolia-movechain.json"), "utf8"),
-  );
-  const base = committed.MoveChainOnlyModule ?? {};
-  tripCreditsAddress = process.env.TRIPCREDITS_ADDRESS ?? base.tripCredits;
-  if (!tripCreditsAddress) {
-    console.error("No TripCredits address (set TRIPCREDITS_ADDRESS or the params file).");
-    process.exit(1);
+  const { base, tripCreditsAddress: tc } = loadMoveChainOnlyParams();
+  tripCreditsAddress = tc;
+
+  if (mode === "preview") {
+    moveChainAddress = deployMoveChainModule(
+      "ignition/modules/MoveChainPreview.ts",
+      "MoveChainPreviewModule",
+      "MoveChainPreviewModule",
+      tripCreditsAddress,
+      base,
+    );
+  } else {
+    moveChainAddress = deployMoveChainModule(
+      "ignition/modules/MoveChainOnly.ts",
+      "MoveChainOnlyModule",
+      "MoveChainOnlyModule",
+      tripCreditsAddress,
+      base,
+    );
   }
-
-  const paramsObj = {
-    MoveChainOnlyModule: {
-      admin1: base.admin1,
-      admin2: base.admin2,
-      admin3: base.admin3,
-      tripCredits: tripCreditsAddress,
-    },
-  };
-  const tmp = mkdtempSync(join(tmpdir(), "movechain-params-"));
-  const paramsPath = join(tmp, "params.json");
-  writeFileSync(paramsPath, JSON.stringify(paramsObj, null, 2));
-
-  run(
-    `npx hardhat ignition deploy ignition/modules/MoveChainOnly.ts ` +
-      `--network sepolia --parameters ${paramsPath} ` +
-      `--deployment-id ${deploymentId}${verifyFlag}`,
-  );
-  const addresses = readAddresses(deploymentId);
-  moveChainAddress = addresses["MoveChainOnlyModule#MoveChain"];
 }
 
 if (!moveChainAddress) {
@@ -129,8 +149,10 @@ if (!moveChainAddress) {
 
 console.log(`\nDeployed MoveChain at ${moveChainAddress}`);
 console.log(`TripCredits at ${tripCreditsAddress}`);
+if (mode === "preview") {
+  console.log("Preview mode: TripCredits.setPlatform was NOT called.");
+}
 
-// Re-seed operators (idempotent). A redeploy wipes the on-chain whitelist.
 run(`node scripts/seed-operators.mjs ${moveChainAddress}`, {
   env: { ...process.env, MOVECHAIN_ADDRESS: moveChainAddress },
 });

@@ -84,7 +84,7 @@ jobs:
           ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
           TRIPCREDITS_ADDRESS: ${{ env.SHARED_TRIPCREDITS_ADDRESS }}
           DEPLOYMENT_ID: ${{ needs.setup.outputs.env_name }}-${{ github.run_id }}
-        run: node scripts/ci-deploy.mjs --mode movechain
+        run: node scripts/ci-deploy.mjs --mode preview
 
       - name: Persist branch MoveChain variables
         if: steps.plan.outputs.action == 'deploy'
@@ -138,7 +138,7 @@ jobs:
         id: note
         run: |
           if [ "${{ steps.plan.outputs.action }}" = "deploy" ]; then
-            echo "text=Deployed MoveChain to Sepolia (shared TripCredits from production)." >> "$GITHUB_OUTPUT"
+            echo "text=Deployed preview MoveChain to Sepolia (shared TripCredits unchanged; credit/trip flows use production platform until merge)." >> "$GITHUB_OUTPUT"
           else
             echo "text=No MoveChain changes — reusing branch environment addresses." >> "$GITHUB_OUTPUT"
           fi

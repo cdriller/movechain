@@ -138,6 +138,8 @@ jobs:
       - name: Build frontend
         env:
           VITE_MOVECHAIN_ADDRESS: ${{ needs.contracts.outputs.movechain_address }}
+          VITE_GIT_SHA: ${{ github.sha }}
+          VITE_GIT_REPO_URL: https://github.com/${{ github.repository }}
         run: npm --prefix frontend run build:sepolia
       - name: Deploy to Vercel production
         env:

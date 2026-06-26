@@ -357,3 +357,22 @@ button.secondary {
 .landing .network-badge {
   margin-top: 1rem;
 }
+
+.app-footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e4e4e7;
+  text-align: center;
+  font-size: 0.75rem;
+}
+
+.app-footer a {
+  color: #71717a;
+  font-family: ui-monospace, monospace;
+  text-decoration: none;
+}
+
+.app-footer a:hover {
+  color: #52525b;
+  text-decoration: underline;
+}

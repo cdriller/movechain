@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly VITE_CHAIN?: string;
   readonly VITE_RPC_URL?: string;
   readonly VITE_SEPOLIA_RPC_URL?: string;
+  readonly VITE_GIT_SHA?: string;
+  readonly VITE_GIT_REPO_URL?: string;
 }
 
 interface ImportMeta {

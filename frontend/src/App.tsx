@@ -1,3 +1,4 @@
+import { type ReactNode } from "react";
 import { RiderView } from "./views/RiderView";
 import { OperatorView } from "./views/OperatorView";
 import { AdminView } from "./views/AdminView";
@@ -6,6 +7,7 @@ import { isAddress } from "viem";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { useRole, type Role } from "./lib/useRole";
 import { shortAddress } from "./lib/trip";
+import { GitCommitFooter } from "./components/GitCommitFooter";
 
 const ROLE_LABELS: Record<Role, string> = {
   rider: "Rider",
@@ -74,6 +76,15 @@ function WrongChain() {
   );
 }
 
+function AppLayout({ children }: { children: ReactNode }) {
+  return (
+    <>
+      {children}
+      <GitCommitFooter />
+    </>
+  );
+}
+
 function AppHeader({ role }: { role: Role }) {
   const { address } = useAccount();
   const { disconnect } = useDisconnect();
@@ -104,39 +115,57 @@ export default function App() {
 
   if (!contractReady) {
     return (
-      <div className="landing">
-        <div className="hero">
-          <span className="hero-badge">MoveChain</span>
-          <p className="error">
-            {!moveChainAddress
-              ? "Missing VITE_MOVECHAIN_ADDRESS — copy frontend/.env.example to frontend/.env"
-              : "Invalid VITE_MOVECHAIN_ADDRESS. Address is not a valid ethereum address"}
-          </p>
+      <AppLayout>
+        <div className="landing">
+          <div className="hero">
+            <span className="hero-badge">MoveChain</span>
+            <p className="error">
+              {!moveChainAddress
+                ? "Missing VITE_MOVECHAIN_ADDRESS — copy frontend/.env.example to frontend/.env"
+                : "Invalid VITE_MOVECHAIN_ADDRESS. Address is not a valid ethereum address"}
+            </p>
+          </div>
         </div>
-      </div>
+      </AppLayout>
     );
   }
 
-  if (!isConnected) return <Landing />;
-  if (chainId !== targetChain.id) return <WrongChain />;
+  if (!isConnected) {
+    return (
+      <AppLayout>
+        <Landing />
+      </AppLayout>
+    );
+  }
+  if (chainId !== targetChain.id) {
+    return (
+      <AppLayout>
+        <WrongChain />
+      </AppLayout>
+    );
+  }
 
   if (isLoading) {
     return (
-      <div className="landing">
-        <div className="hero">
-          <span className="hero-badge">MoveChain</span>
-          <p className="muted">Checking your access…</p>
+      <AppLayout>
+        <div className="landing">
+          <div className="hero">
+            <span className="hero-badge">MoveChain</span>
+            <p className="muted">Checking your access…</p>
+          </div>
         </div>
-      </div>
+      </AppLayout>
     );
   }
 
   return (
-    <div>
-      <AppHeader role={role} />
-      {role === "rider" && <RiderView />}
-      {role === "operator" && <OperatorView />}
-      {role === "admin" && <AdminView />}
-    </div>
+    <AppLayout>
+      <div>
+        <AppHeader role={role} />
+        {role === "rider" && <RiderView />}
+        {role === "operator" && <OperatorView />}
+        {role === "admin" && <AdminView />}
+      </div>
+    </AppLayout>
   );
 }

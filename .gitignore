@@ -1,0 +1,41 @@
+# Node modules
+/node_modules
+
+# Compilation output
+/dist
+/bin
+
+# pnpm deploy output
+/bundle
+
+# Hardhat Build Artifacts
+/artifacts
+
+# Hardhat compilation (v2) support directory
+/cache
+
+# Ignore local hardhat network deployments only
+ignition/deployments/chain-31337/
+
+# Typechain output
+/types
+
+# Environment files
+.env
+.env.*
+!.env.example
+# Committed Sepolia config (public values only; secrets go in .env.sepolia.local)
+!.env.sepolia
+
+# Hardhat coverage reports
+/coverage
+
+# Gas snapshot files
+/.gas-snapshot
+
+# Snapshot cheatcodes output
+/snapshots
+
+# Frontend
+/frontend/node_modules
+/frontend/dist

@@ -1,0 +1,42 @@
+{
+  "name": "my-hardhat-project",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "hardhat test",
+    "compile": "hardhat compile && node scripts/gen-abi.mjs",
+    "gen:abi": "node scripts/gen-abi.mjs",
+    "node": "hardhat node",
+    "deploy:local": "node scripts/deploy-local.mjs",
+    "deploy:sepolia:movechain": "node scripts/deploy-sepolia-movechain.mjs",
+    "local": "node scripts/deploy-local.mjs && npm --prefix frontend run dev",
+    "e2e": "node scripts/verify-flow.mjs",
+    "e2e:fresh": "node scripts/deploy-local.mjs && node scripts/verify-flow.mjs",
+    "seed:operators": "node scripts/seed-operators.mjs",
+    "ci:hash": "node scripts/ci-hash.mjs",
+    "ci:deploy:movechain": "node scripts/ci-deploy.mjs --mode movechain",
+    "ci:deploy:full": "node scripts/ci-deploy.mjs --mode full"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "^3.1.5",
+    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.5",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.19.18",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "hardhat": "^3.4.5",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.8.0",
+    "viem": "^2.48.11"
+  },
+  "dependencies": {
+    "@nomicfoundation/hardhat-verify": "^3.0.20",
+    "@openzeppelin/contracts": "^5.6.1"
+  }
+}

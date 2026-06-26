@@ -1,0 +1,169 @@
+name: Main
+
+# Push to main. TripCredits is shared globally (production environment only).
+# Branch environments store MoveChain only. On merge, MoveChain may be promoted
+# from the source branch environment or redeployed.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: main-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      source_env: ${{ steps.source.outputs.env_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: source
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ENV="$(node scripts/ci-merge-source-env.mjs || true)"
+          echo "env_name=$ENV" >> "$GITHUB_OUTPUT"
+          if [ -n "$ENV" ]; then
+            echo "Merge source environment: $ENV"
+          else
+            echo "No merge source environment (direct push or squash without PR metadata)."
+          fi
+
+  contracts:
+    needs: setup
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://movechain.vercel.app
+    outputs:
+      movechain_address: ${{ steps.addresses.outputs.movechain_address }}
+      tripcredits_address: ${{ steps.addresses.outputs.tripcredits_address }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Use HTTPS for GitHub git dependencies
+        run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+      - run: npm ci
+      - run: npx hardhat compile
+
+      - name: Load source MoveChain variables
+        if: needs.setup.outputs.source_env != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          JSON="$(node scripts/ci-env-vars.mjs get-json --env "${{ needs.setup.outputs.source_env }}" --scope branch)"
+          echo "$JSON" | jq -r 'to_entries[] | select(.value != "") | "SOURCE_\(.key)=\(.value)"' >> "$GITHUB_ENV"
+
+      - name: Plan contract updates
+        id: plan
+        env:
+          MOVECHAIN_ADDRESS: ${{ vars.MOVECHAIN_ADDRESS }}
+          TRIPCREDITS_ADDRESS: ${{ vars.TRIPCREDITS_ADDRESS }}
+          MOVECHAIN_BYTECODE_HASH: ${{ vars.MOVECHAIN_BYTECODE_HASH }}
+          TRIPCREDITS_BYTECODE_HASH: ${{ vars.TRIPCREDITS_BYTECODE_HASH }}
+        run: |
+          ARGS=(--role production)
+          if [ -n "${{ needs.setup.outputs.source_env }}" ]; then
+            ARGS+=(--source-env "${{ needs.setup.outputs.source_env }}")
+          fi
+          node scripts/ci-plan.mjs "${ARGS[@]}"
+
+      - name: Deploy contracts to Sepolia
+        id: deploy
+        if: steps.plan.outputs.action == 'deploy'
+        env:
+          SEPOLIA_PRIVATE_KEY: ${{ secrets.SEPOLIA_PRIVATE_KEY }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+          TRIPCREDITS_ADDRESS: ${{ vars.TRIPCREDITS_ADDRESS }}
+          DEPLOYMENT_ID: production-${{ github.run_id }}
+        run: node scripts/ci-deploy.mjs --mode ${{ steps.plan.outputs.deploy_mode }}
+
+      - name: Persist production environment variables
+        if: steps.plan.outputs.action == 'deploy'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          movechain_address: ${{ steps.deploy.outputs.movechain_address }}
+          tripcredits_address: ${{ steps.deploy.outputs.tripcredits_address }}
+          movechain_hash: ${{ steps.deploy.outputs.movechain_hash }}
+          tripcredits_hash: ${{ steps.deploy.outputs.tripcredits_hash }}
+        run: node scripts/ci-env-vars.mjs set --env production
+
+      - name: Promote MoveChain from source environment
+        if: steps.plan.outputs.action == 'promote'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          node scripts/ci-env-vars.mjs promote \
+            --source "${{ needs.setup.outputs.source_env }}" \
+            --target production
+
+      - name: Resolve MoveChain address
+        id: addresses
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ADDR="${{ steps.deploy.outputs.movechain_address }}"
+          if [ -z "$ADDR" ]; then
+            ADDR="$(gh variable get MOVECHAIN_ADDRESS --env production)"
+          fi
+          if [ -z "$ADDR" ]; then
+            echo "No MoveChain address available in production."
+            exit 1
+          fi
+          TC="${{ steps.deploy.outputs.tripcredits_address }}"
+          if [ -z "$TC" ]; then
+            TC="$(gh variable get TRIPCREDITS_ADDRESS --env production)"
+          fi
+          if [ -z "$TC" ]; then
+            echo "No TripCredits address available in production."
+            exit 1
+          fi
+          echo "movechain_address=$ADDR" >> "$GITHUB_OUTPUT"
+          echo "tripcredits_address=$TC" >> "$GITHUB_OUTPUT"
+          echo "Production MoveChain: $ADDR (action=${{ steps.plan.outputs.action }})"
+          echo "Production TripCredits: $TC"
+
+  frontend:
+    needs: contracts
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Use HTTPS for GitHub git dependencies
+        run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+      - run: npm ci
+      - run: npx hardhat compile && npm run gen:abi
+      - run: npm --prefix frontend ci
+      - name: Build frontend
+        env:
+          VITE_MOVECHAIN_ADDRESS: ${{ needs.contracts.outputs.movechain_address }}
+          VITE_TRIPCREDITS_ADDRESS: ${{ needs.contracts.outputs.tripcredits_address }}
+          VITE_GIT_SHA: ${{ github.sha }}
+          VITE_GIT_REPO_URL: https://github.com/${{ github.repository }}
+        run: npm --prefix frontend run build:sepolia
+      - name: Deploy to Vercel production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          npm i -g vercel@latest
+          rm -rf .vercel/output
+          mkdir -p .vercel/output/static
+          cp -a frontend/dist/. .vercel/output/static/
+          printf '{"version":3}' > .vercel/output/config.json
+          vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN"

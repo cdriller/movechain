@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Skip in emergencies: SKIP_PRE_PUSH_TESTS=1 git push ...
+if [ "${SKIP_PRE_PUSH_TESTS:-}" = "1" ]; then
+  echo "pre-push: SKIP_PRE_PUSH_TESTS=1, skipping tests"
+  exit 0
+fi
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+pushing_to_main=false
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ -z "${remote_ref:-}" ]; then
+    continue
+  fi
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    pushing_to_main=true
+    break
+  fi
+done
+
+if [ "$pushing_to_main" = false ]; then
+  exit 0
+fi
+
+echo "pre-push: push to main detected — running npm test..."
+npm test
+echo "pre-push: tests passed."

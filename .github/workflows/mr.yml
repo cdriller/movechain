@@ -1,0 +1,172 @@
+name: MR
+
+# Pull request against main: test gate, branch environment, MoveChain preview
+# deploy, and Vercel preview. TripCredits is shared from production.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: mr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Use HTTPS for GitHub git dependencies
+        run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+      - run: npm ci
+      - run: npm test
+
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      env_name: ${{ steps.meta.outputs.env_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "env_name=$(node scripts/branch-env-name.mjs '${{ github.head_ref }}')" >> "$GITHUB_OUTPUT"
+      - name: Ensure GitHub environment
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: node scripts/ci-ensure-environment.mjs "${{ steps.meta.outputs.env_name }}"
+
+  deploy:
+    needs: [setup, test]
+    runs-on: ubuntu-latest
+    environment: 
+      name:  ${{ needs.setup.outputs.env_name }}
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Use HTTPS for GitHub git dependencies
+        run: git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+      - run: npm ci
+      - run: npx hardhat compile
+
+      - name: Load branch MoveChain variables
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          JSON="$(node scripts/ci-env-vars.mjs get-json --env "${{ needs.setup.outputs.env_name }}" --scope branch)"
+          echo "$JSON" | jq -r 'to_entries[] | select(.value != "") | "\(.key)=\(.value)"' >> "$GITHUB_ENV"
+
+      - name: Load shared contracts from production
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          JSON="$(node scripts/ci-env-vars.mjs get-json --env production --scope production)"
+          echo "$JSON" | jq -r 'to_entries[] | select(.key | startswith("TRIPCREDITS")) | select(.value != "") | "SHARED_\(.key)=\(.value)"' >> "$GITHUB_ENV"
+          echo "$JSON" | jq -r 'to_entries[] | select(.key | startswith("MOVECHAIN")) | select(.value != "") | "SHARED_\(.key)=\(.value)"' >> "$GITHUB_ENV"
+
+      - name: Plan contract updates
+        id: plan
+        run: node scripts/ci-plan.mjs --role branch
+
+      - name: Deploy MoveChain to Sepolia
+        id: deploy
+        if: steps.plan.outputs.action == 'deploy'
+        env:
+          SEPOLIA_PRIVATE_KEY: ${{ secrets.SEPOLIA_PRIVATE_KEY }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+          TRIPCREDITS_ADDRESS: ${{ env.SHARED_TRIPCREDITS_ADDRESS }}
+          DEPLOYMENT_ID: ${{ needs.setup.outputs.env_name }}-${{ github.run_id }}
+        run: node scripts/ci-deploy.mjs --mode preview
+
+      - name: Persist branch MoveChain variables
+        if: steps.plan.outputs.action == 'deploy' || (steps.plan.outputs.action == 'none' && steps.plan.outputs.movechain_reuse_source == 'production')
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          movechain_address: ${{ steps.deploy.outputs.movechain_address || steps.plan.outputs.movechain_reuse_address }}
+          movechain_hash: ${{ steps.plan.outputs.movechain_hash }}
+        run: node scripts/ci-env-vars.mjs set --env "${{ needs.setup.outputs.env_name }}" --scope branch
+
+      - name: Resolve MoveChain address
+        id: addresses
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ADDR="${{ steps.deploy.outputs.movechain_address }}"
+          if [ -z "$ADDR" ]; then
+            ADDR="${{ steps.plan.outputs.movechain_reuse_address }}"
+          fi
+          if [ -z "$ADDR" ]; then
+            ADDR="$(gh variable get MOVECHAIN_ADDRESS --env "${{ needs.setup.outputs.env_name }}" 2>/dev/null || true)"
+          fi
+          if [ -z "$ADDR" ]; then
+            ADDR="${{ env.SHARED_MOVECHAIN_ADDRESS }}"
+          fi
+          if [ -z "$ADDR" ]; then
+            echo "No MoveChain address available for this branch environment."
+            exit 1
+          fi
+          echo "movechain_address=$ADDR" >> "$GITHUB_OUTPUT"
+          echo "tripcredits_address=${{ env.SHARED_TRIPCREDITS_ADDRESS }}" >> "$GITHUB_OUTPUT"
+
+      - run: npm run gen:abi
+      - run: npm --prefix frontend ci
+      - name: Build frontend
+        env:
+          VITE_MOVECHAIN_ADDRESS: ${{ steps.addresses.outputs.movechain_address }}
+          VITE_TRIPCREDITS_ADDRESS: ${{ steps.addresses.outputs.tripcredits_address }}
+          VITE_GIT_SHA: ${{ github.sha }}
+          VITE_GIT_REPO_URL: https://github.com/${{ github.repository }}
+        run: npm --prefix frontend run build:sepolia
+
+      - name: Deploy Vercel preview
+        id: vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          npm i -g vercel@latest
+          rm -rf .vercel/output
+          mkdir -p .vercel/output/static
+          cp -a frontend/dist/. .vercel/output/static/
+          printf '{"version":3}' > .vercel/output/config.json
+          URL="$(vercel deploy --prebuilt --yes --token="$VERCEL_TOKEN")"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare PR comment note
+        id: note
+        run: |
+          if [ "${{ steps.plan.outputs.action }}" = "deploy" ]; then
+            echo "text=Deployed preview MoveChain to Sepolia and registered it as an additional TripCredits platform (shared TripCredits unchanged)." >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.plan.outputs.movechain_reuse_source }}" = "production" ]; then
+            echo "text=No MoveChain changes — reusing production MoveChain address." >> "$GITHUB_OUTPUT"
+          else
+            echo "text=No MoveChain changes — reusing branch environment addresses." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment preview on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: movechain-preview
+          message: |
+            ## MoveChain preview
+
+            | | |
+            |---|---|
+            | **Environment** | `${{ needs.setup.outputs.env_name }}` |
+            | **Vercel** | ${{ steps.vercel.outputs.url }} |
+            | **MoveChain** | [`${{ steps.addresses.outputs.movechain_address }}`](https://sepolia.etherscan.io/address/${{ steps.addresses.outputs.movechain_address }}) |
+            | **TripCredits** *(shared)* | [`${{ steps.addresses.outputs.tripcredits_address }}`](https://sepolia.etherscan.io/address/${{ steps.addresses.outputs.tripcredits_address }}) |
+
+            ${{ steps.note.outputs.text }}

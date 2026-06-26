@@ -1,0 +1,10 @@
+{
+  "_comment": "Operators that get (re-)seeded onto MoveChain after every fresh deploy. A redeploy creates a new MoveChain address and wipes the on-chain operator whitelist, so this list is the source of truth. Seeding is idempotent: operators already whitelisted on-chain are skipped. `price` is the trip price in TripCredits (uint256, as a string). Replace the placeholders below with the real operators, or leave the list empty to skip seeding.",
+  "operators": [
+    {
+      "address": "0x13641597dEb1EAEBa04593cA2887802dD039956B",
+      "price": "1",
+      "name": "CarLos"
+    }
+  ]
+}

@@ -7,6 +7,7 @@
 // Branch / MR:
 //   node scripts/ci-plan.mjs --role branch
 //   Env: MOVECHAIN_ADDRESS, MOVECHAIN_BYTECODE_HASH (branch)
+//        SHARED_MOVECHAIN_ADDRESS, SHARED_MOVECHAIN_BYTECODE_HASH (production)
 //        SHARED_TRIPCREDITS_ADDRESS, SHARED_TRIPCREDITS_BYTECODE_HASH (production)
 //
 // Production (optional source branch environment for merge promotion):
@@ -57,12 +58,27 @@ function contractChanged(compiled, address, storedHash) {
   return compiled !== storedHash;
 }
 
+function movechainRef(branch, shared) {
+  if (branch.movechainAddress && branch.movechainHash) {
+    return {
+      address: branch.movechainAddress,
+      hash: branch.movechainHash,
+      source: "branch",
+    };
+  }
+  if (shared.movechainAddress && shared.movechainHash) {
+    return {
+      address: shared.movechainAddress,
+      hash: shared.movechainHash,
+      source: "production",
+    };
+  }
+  return { address: "", hash: "", source: "none" };
+}
+
 function branchPlan(branch, shared, mcCompiled, tcCompiled) {
-  const mcChanged = contractChanged(
-    mcCompiled,
-    branch.movechainAddress,
-    branch.movechainHash,
-  );
+  const mcRef = movechainRef(branch, shared);
+  const mcChanged = mcRef.hash ? mcCompiled !== mcRef.hash : true;
   const tcChangedGlobally = contractChanged(
     tcCompiled,
     shared.tripcreditsAddress,
@@ -77,16 +93,20 @@ function branchPlan(branch, shared, mcCompiled, tcCompiled) {
       tripcredits_changed: true,
       tripcredits_blocked: true,
       promote_scope: "",
+      movechain_reuse_source: "",
+      movechain_reuse_address: "",
     };
   }
 
   return {
     action: mcChanged ? "deploy" : "none",
-    deploy_mode: mcChanged ? "movechain" : "none",
+    deploy_mode: mcChanged ? "preview" : "none",
     movechain_changed: mcChanged,
     tripcredits_changed: false,
     tripcredits_blocked: false,
     promote_scope: "",
+    movechain_reuse_source: mcChanged ? "" : mcRef.source,
+    movechain_reuse_address: mcChanged ? "" : mcRef.address,
   };
 }
 
@@ -105,6 +125,8 @@ function productionPlan(target, source, mcCompiled, tcCompiled, hasSource) {
       tripcredits_changed: true,
       tripcredits_blocked: false,
       promote_scope: "",
+      movechain_reuse_source: "",
+      movechain_reuse_address: "",
     };
   }
 
@@ -122,6 +144,8 @@ function productionPlan(target, source, mcCompiled, tcCompiled, hasSource) {
       tripcredits_changed: false,
       tripcredits_blocked: false,
       promote_scope: "",
+      movechain_reuse_source: "",
+      movechain_reuse_address: "",
     };
   }
 
@@ -139,6 +163,8 @@ function productionPlan(target, source, mcCompiled, tcCompiled, hasSource) {
       tripcredits_changed: false,
       tripcredits_blocked: false,
       promote_scope: "",
+      movechain_reuse_source: "",
+      movechain_reuse_address: "",
     };
   }
 
@@ -150,6 +176,8 @@ function productionPlan(target, source, mcCompiled, tcCompiled, hasSource) {
       tripcredits_changed: false,
       tripcredits_blocked: false,
       promote_scope: "movechain",
+      movechain_reuse_source: "",
+      movechain_reuse_address: "",
     };
   }
 
@@ -160,6 +188,8 @@ function productionPlan(target, source, mcCompiled, tcCompiled, hasSource) {
     tripcredits_changed: false,
     tripcredits_blocked: false,
     promote_scope: "",
+    movechain_reuse_source: "",
+    movechain_reuse_address: "",
   };
 }
 
@@ -191,6 +221,8 @@ if (process.env.GITHUB_OUTPUT) {
     `promote_scope=${plan.promote_scope}`,
     `movechain_hash=${mcCompiled}`,
     `tripcredits_hash=${tcCompiled}`,
+    `movechain_reuse_source=${plan.movechain_reuse_source}`,
+    `movechain_reuse_address=${plan.movechain_reuse_address}`,
   ];
   appendFileSync(process.env.GITHUB_OUTPUT, lines.join("\n") + "\n");
 }

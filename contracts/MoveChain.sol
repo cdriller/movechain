@@ -74,7 +74,7 @@ contract MoveChain is EIP712 {
         _addAdmin(admin3);
 
         // TripCredits is deployed separately to keep MoveChain deployments cheap.
-        // The deployer wires MoveChain as the platform via TripCredits.setPlatform()
+        // The deployer wires MoveChain as a platform via TripCredits.addPlatform()
         // after deployment (MoveChain is not the owner of TripCredits anymore).
         tripCredits = TripCredits(tripCreditsAddress);
         creditToEth = 0.0000000001 ether;

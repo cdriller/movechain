@@ -64,12 +64,13 @@ jobs:
           JSON="$(node scripts/ci-env-vars.mjs get-json --env "${{ needs.setup.outputs.env_name }}" --scope branch)"
           echo "$JSON" | jq -r 'to_entries[] | select(.value != "") | "\(.key)=\(.value)"' >> "$GITHUB_ENV"
 
-      - name: Load shared TripCredits from production
+      - name: Load shared contracts from production
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           JSON="$(node scripts/ci-env-vars.mjs get-json --env production --scope production)"
           echo "$JSON" | jq -r 'to_entries[] | select(.key | startswith("TRIPCREDITS")) | select(.value != "") | "SHARED_\(.key)=\(.value)"' >> "$GITHUB_ENV"
+          echo "$JSON" | jq -r 'to_entries[] | select(.key | startswith("MOVECHAIN")) | select(.value != "") | "SHARED_\(.key)=\(.value)"' >> "$GITHUB_ENV"
 
       - name: Plan contract updates
         id: plan
@@ -87,11 +88,11 @@ jobs:
         run: node scripts/ci-deploy.mjs --mode preview
 
       - name: Persist branch MoveChain variables
-        if: steps.plan.outputs.action == 'deploy'
+        if: steps.plan.outputs.action == 'deploy' || (steps.plan.outputs.action == 'none' && steps.plan.outputs.movechain_reuse_source == 'production')
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          movechain_address: ${{ steps.deploy.outputs.movechain_address }}
-          movechain_hash: ${{ steps.deploy.outputs.movechain_hash }}
+          movechain_address: ${{ steps.deploy.outputs.movechain_address || steps.plan.outputs.movechain_reuse_address }}
+          movechain_hash: ${{ steps.plan.outputs.movechain_hash }}
         run: node scripts/ci-env-vars.mjs set --env "${{ needs.setup.outputs.env_name }}" --scope branch
 
       - name: Resolve MoveChain address
@@ -101,7 +102,13 @@ jobs:
         run: |
           ADDR="${{ steps.deploy.outputs.movechain_address }}"
           if [ -z "$ADDR" ]; then
-            ADDR="$(gh variable get MOVECHAIN_ADDRESS --env "${{ needs.setup.outputs.env_name }}")"
+            ADDR="${{ steps.plan.outputs.movechain_reuse_address }}"
+          fi
+          if [ -z "$ADDR" ]; then
+            ADDR="$(gh variable get MOVECHAIN_ADDRESS --env "${{ needs.setup.outputs.env_name }}" 2>/dev/null || true)"
+          fi
+          if [ -z "$ADDR" ]; then
+            ADDR="${{ env.SHARED_MOVECHAIN_ADDRESS }}"
           fi
           if [ -z "$ADDR" ]; then
             echo "No MoveChain address available for this branch environment."
@@ -138,7 +145,9 @@ jobs:
         id: note
         run: |
           if [ "${{ steps.plan.outputs.action }}" = "deploy" ]; then
-            echo "text=Deployed preview MoveChain to Sepolia (shared TripCredits unchanged; credit/trip flows use production platform until merge)." >> "$GITHUB_OUTPUT"
+            echo "text=Deployed preview MoveChain to Sepolia and registered it as an additional TripCredits platform (shared TripCredits unchanged)." >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.plan.outputs.movechain_reuse_source }}" = "production" ]; then
+            echo "text=No MoveChain changes — reusing production MoveChain address." >> "$GITHUB_OUTPUT"
           else
             echo "text=No MoveChain changes — reusing branch environment addresses." >> "$GITHUB_OUTPUT"
           fi

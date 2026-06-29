@@ -8,7 +8,7 @@ export default buildModule("MoveChainModule", (m) => {
   const tripCredits = m.contract("TripCredits");
   const moveChain = m.contract("MoveChain", [admin1, admin2, admin3, tripCredits]);
 
-  m.call(tripCredits, "setPlatform", [moveChain]);
+  m.call(tripCredits, "addPlatform", [moveChain]);
 
   return { tripCredits, moveChain };
 });

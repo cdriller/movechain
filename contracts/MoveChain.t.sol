@@ -7,6 +7,7 @@ import {TripCredits} from "./TripCredits.sol";
 
 contract MoveChainTest is Test {
     MoveChain internal moveChain;
+    TripCredits internal tripCredits;
 
     // The rider private key is just picked abitrary
     uint256 internal constant RIDER_PK = 0xA11CE;
@@ -29,11 +30,12 @@ contract MoveChainTest is Test {
     function setUp() public {
         // TripCredits is now deployed separately and passed into MoveChain.
         // The test contract owns TripCredits, so it can wire MoveChain as platform.
-        TripCredits tripCredits = new TripCredits();
+        TripCredits tripCredits_ = new TripCredits();
+        tripCredits = tripCredits_;
 
         // The test contract deploys MoveChain, so address(this) is one of the admins.
-        moveChain = new MoveChain(address(this), admin2, admin3, address(tripCredits));
-        tripCredits.setPlatform(address(moveChain));
+        moveChain = new MoveChain(address(this), admin2, admin3, address(tripCredits_));
+        tripCredits.addPlatform(address(moveChain));
 
         rider = vm.addr(RIDER_PK);
         moveChain.addOperator(operator, PRICE, "Test Operator");
@@ -186,6 +188,21 @@ contract MoveChainTest is Test {
         assertEq(moveChain.creditsOf(rider), 10 - PRICE);
         assertEq(moveChain.creditsOf(operator), PRICE);
         assertEq(moveChain.getNonce(rider), 2); // one START + one STOP
+    }
+
+    function test_TwoPlatformsShareTripCredits() public {
+        MoveChain moveChain2 = new MoveChain(address(this), admin2, admin3, address(tripCredits));
+        tripCredits.addPlatform(address(moveChain2));
+
+        _buyRiderCredits(10);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory startSig = _signRider(moveChain.ACTION_START(), deadline);
+        vm.prank(operator);
+        moveChain.startTrip(rider, deadline, startSig);
+
+        assertTrue(moveChain.isOnTrip(rider));
+        assertFalse(moveChain2.isOnTrip(rider));
     }
 
 }

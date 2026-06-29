@@ -1,9 +1,8 @@
 // Non-interactive Sepolia deploy for CI.
 //
 // Modes:
-//   --mode preview    Branch preview: deploy MoveChain only, do NOT call
-//                     TripCredits.setPlatform (production stays wired).
-//   --mode movechain  Production: redeploy MoveChain + setPlatform on TripCredits.
+//   --mode preview    Branch preview: deploy MoveChain + addPlatform on TripCredits.
+//   --mode movechain  Production: redeploy MoveChain + addPlatform on TripCredits.
 //   --mode full       Fresh TripCredits + MoveChain (destructive).
 //
 // After deploying it re-seeds the operator whitelist (scripts/seed-operators.mjs)
@@ -150,7 +149,7 @@ if (!moveChainAddress) {
 console.log(`\nDeployed MoveChain at ${moveChainAddress}`);
 console.log(`TripCredits at ${tripCreditsAddress}`);
 if (mode === "preview") {
-  console.log("Preview mode: TripCredits.setPlatform was NOT called.");
+  console.log("Preview mode: MoveChain registered as additional TripCredits platform.");
 }
 
 run(`node scripts/seed-operators.mjs ${moveChainAddress}`, {

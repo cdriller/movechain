@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 
 contract TripCredits is ERC1155 {
     address owner;
-    address platform;
+    mapping(address => bool) public platforms;
 
     modifier onlyOwner {
         require(msg.sender == owner);
@@ -13,7 +13,7 @@ contract TripCredits is ERC1155 {
     }
 
     modifier onlyPlatform {
-        require(msg.sender == platform);
+        require(platforms[msg.sender]);
         _;
 
     }
@@ -22,8 +22,12 @@ contract TripCredits is ERC1155 {
         owner = msg.sender;
     }
 
-    function setPlatform(address _platform) public onlyOwner {
-        platform = _platform;
+    function addPlatform(address _platform) public onlyOwner {
+        platforms[_platform] = true;
+    }
+
+    function removePlatform(address _platform) public onlyOwner {
+        platforms[_platform] = false;
     }
 
     function addCredits(address to, uint256 amount) public onlyPlatform {

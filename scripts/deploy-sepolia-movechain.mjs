@@ -1,6 +1,6 @@
 // Redeploys ONLY MoveChain to Sepolia against the existing TripCredits, then:
 //   1. verifies the new MoveChain on Etherscan
-//   2. re-points the existing TripCredits.platform at the new MoveChain (in-module)
+//   2. registers the new MoveChain as an additional TripCredits platform (in-module)
 //   3. regenerates the frontend ABI from the freshly compiled artifact
 //   4. writes the new MoveChain address into frontend/.env.sepolia
 //
@@ -9,7 +9,7 @@
 //
 // Prerequisites: SEPOLIA_RPC_URL, SEPOLIA_PRIVATE_KEY and ETHERSCAN_API_KEY must
 // be available (Hardhat keystore or env vars), and the deploying account must be
-// the original owner of TripCredits (setPlatform is onlyOwner). You will be
+// the original owner of TripCredits (addPlatform is onlyOwner). You will be
 // prompted for the keystore password unless HARDHAT_KEYSTORE_PASSWORD is set.
 //
 // Usage:  npm run deploy:sepolia:movechain
@@ -63,5 +63,5 @@ if (!moveChain) {
 updateFrontendEnv(moveChain);
 
 console.log(`\nDone. New MoveChain deployed + verified at ${moveChain}.`);
-console.log("Existing TripCredits preserved and re-pointed to the new MoveChain.");
+console.log("Existing TripCredits preserved; new MoveChain registered as platform.");
 console.log("Run the frontend against Sepolia with:  cd frontend && npm run sepolia");

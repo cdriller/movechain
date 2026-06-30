@@ -1,6 +1,9 @@
-# Current Todos
+Operator ohne MetaMask
 
-Was muss alles bis zur nächsten Woche (30.6.) gemacht werden.
+Schnelles rot/grün Feedback beim Scannen des Rider QR-Codes
+
+
+# Current Todos
 
 ## Speed up process
 
